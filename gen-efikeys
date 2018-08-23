@@ -1,6 +1,18 @@
 #!/bin/sh
 set -e
 
+case "$1" in
+    help|-h|--help)
+        printf >&2 '%s\n' \
+            'usage: gen-efikeys [output-dir]'
+        exit 1
+    ;;
+    '') ;;
+    *)
+        cd "$1" || exit 1
+    ;;
+esac
+
 NAME="$USER@$(hostname --fqdn)"
 
 openssl req \
