@@ -1,0 +1,128 @@
+#!/bin/bash
+# Copyright (c) 2018, Anthony DeDominic <adedomin@gmail.com>
+#
+# Permission to use, copy, modify, and/or distribute this software for any
+# purpose with or without fee is hereby granted, provided that the above
+# copyright notice and this permission notice appear in all copies.
+#
+# THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+# WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+# MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+# ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+# WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+# ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+# OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+
+die() {
+    printf >&2 '%s\n' "Error: $*"
+    exit 1
+}
+
+detect_version_template() {
+    case "$1" in
+        *'%version%'*'%version%'*)
+            return 1
+        ;;
+    esac
+}
+
+source /etc/bundle-kernel.conf || die 'Failed to source configuration.'
+[[ -z "$KERNEL_PATTERN" ]] &&
+    die 'missing $KERNEL_PATTERN from /etc/bundle-kernel.conf'
+detect_version_template "$KERNEL_PATTERN" ||
+    die 'there can only be one %version% pattern in $KERNEL_PATTERN.'
+[[ -z "$INITRAMFS_PATTERN" ]] &&
+    die 'missing $INITRAMFS_PATTERN from /etc/bundle-kernel.conf'
+detect_version_template "$INITRAMFS_PATTERN" ||
+    die 'there can only be one %version% pattern in $INITRAMFS_PATTERN.'
+[[ -z "$CMDLINE_PATTERN" ]] &&
+    die 'missing $CMDLINE_PATTERN from /etc/bundle-kernel.conf'
+detect_version_template "$CMDLINE_PATTERN" ||
+    die 'there can only be one %version% pattern in $CMDLINE_PATTERN.'
+[[ ! -f "$OS_RELEASE" ]] &&
+    die '$OS_RELEASE, from /etc/bundle-kernel.conf, is not a file.'
+[[ ! -f "$SECUREBOOT_DBKEY" ]] &&
+    die '$SECUREBOOT_DBKEY, from /etc/bundle-kernel.conf, is not a file.'
+[[ ! -f "$SECUREBOOT_DBCRT" ]] &&
+    die '$SECUREBOOT_DBCRT, from /etc/bundle-kernel.conf, is not a file.'
+[[ -z "$ESP" ]] &&
+    die 'missing $ESP from /etc/bundle-kernel.conf'
+[[ ! -d "$DESTINATION" ]] &&
+    die '$DESTINATION, from /etc/bundle-kernel.conf, is not a directory'
+[[ -z "$RETENTION" ]] &&
+   die '$RETENTION is not defined in /etc/bundle-kernel.conf'
+
+kpatt1="${KERNEL_PATTERN%'%version%'*}"
+kpatt2="${KERNEL_PATTERN##"$kpatt1"}"
+kpatt2="${kpatt2#'%version%'}"
+klatest="$(
+    printf '%s\0' "$kpatt1"*"$kpatt2" \
+    | sort --version-sort \
+        --zero-terminated \
+        --reverse \
+    | head -1 --zero-terminated \
+    | tr -d '\0'
+)"
+
+[[ -f "$klatest" ]] ||
+    die "no kernel found for given pattern $KERNEL_PATTERN"
+
+kversion="${klatest##"$kpatt1"}"
+kversion="${kversion%"$kpatt2"}"
+
+initramfs="${INITRAMFS_PATTERN/'%version%'/"$kversion"}"
+[[ -f "$initramfs" ]] ||
+    die "no initramfs found for given pattern $INITRAMFS_PATTERN"
+
+cmdline="${CMDLINE_PATTERN/'%version%'/"$kversion"}"
+[[ -f "$cmdline" ]] ||
+    die "no cmdline found for given pattern $CMDLINE_PATTERN"
+
+destination="$DESTINATION"/linux-"$kversion".exe
+
+# create bundle for systemd-boot's bootloader
+objcopy \
+    --add-section .osrel="$OS_RELEASE" \
+        --change-section-vma .osrel=0x20000 \
+    --add-section .cmdline="$cmdline" \
+        --change-section-vma .cmdline=0x30000 \
+    --add-section .linux="$klatest" \
+        --change-section-vma .linux=0x40000 \
+    --add-section .initrd="$initramfs" \
+        --change-section-vma .initrd=0x3000000 \
+    \
+    /usr/lib/systemd/boot/efi/linuxx64.efi.stub \
+    "$destination" || die 'failed to create bundle'
+
+# secureboot sign bundle
+sbsign \
+    --key "$SECUREBOOT_DBKEY" \
+    --cert "$SECUREBOOT_DBCRT" \
+    --output "$destination" \
+    "$destination" || die 'failed to sign bundle'
+
+# generate bootloader entry
+printf '%s\n' \
+    "title linux-${kversion}" \
+    "efi ${destination#"$ESP"}" \
+> "$ESP/loader/entries/linux-${kversion}.conf" ||
+    die 'failed to create bootloader entry'
+
+# remove older bundles and entries
+pushd "$DESTINATION" >/dev/null || die 'failed to remove old bundles'
+mapfile -t -d $'\0' bundles < <(
+    printf '%s\0' linux-*.exe \
+    | sort --version-sort \
+        --zero-terminated \
+        --reverse
+)
+rm -f -- "${bundles[@]:$RETENTION}"
+popd >/dev/null || true
+pushd "$ESP/loader/entries" >/dev/null || die 'failed to remove old entries'
+mapfile -t -d $'\0' entries < <(
+    printf '%s\0' linux-*.conf \
+    | sort --version-sort \
+        --zero-terminated \
+        --reverse
+)
+rm -f -- "${entries[@]:$RETENTION}"
