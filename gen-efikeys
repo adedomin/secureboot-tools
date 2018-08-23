@@ -41,7 +41,7 @@ openssl req \
 chmod 0600  -- *.key
 
 GUID="$(cat /proc/sys/kernel/random/uuid)"
-echo "$GUID" > guid.uuid
+printf '%s\n' "$GUID" > guid.uuid
 
 cert-to-efi-sig-list -g "$GUID" \
     PK.crt PK.esl
