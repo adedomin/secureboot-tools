@@ -20,12 +20,15 @@ die() {
 . /etc/bundle-kernel.conf ||
     die 'Failed to source configuration.'
 
-bootctl --path="$ESP" update ||
-    die 'Failed to update systemd-boot bootloader'
+if ! bootctl --path="$ESP" update; then
+    # try installing
+    bootctl --path="$ESP" install ||
+        die 'Failed to update/install systemd-boot'
+fi
 
 sbsign \
     --key "$SECUREBOOT_DBKEY" \
     --cert "$SECUREBOOT_DBCRT" \
     --output "$ESP"/EFI/systemd/systemd-bootx64.efi \
     "$ESP"/EFI/systemd/systemd-bootx64.efi ||
-    die 'Failed to sign updated bootloader'
+        die 'Failed to sign updated bootloader'

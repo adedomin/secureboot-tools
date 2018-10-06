@@ -1,0 +1,24 @@
+#!/bin/sh
+die() {
+    printf >&2 'Error: %s\n' "$@"
+    exit 1
+}
+
+case "$1" in
+    -h|--help|help)
+        printf >&2 '%s\n' 'insert-efikeys [gen-efikeys-output]' ;;
+    *)
+        cd "$1" || die 'failed to change directories'
+    ;;
+esac
+
+efi-readvar | while read -r; do
+    case "$REPLY" in
+        *'no entries'*) ;;
+        *) die "variables already installed: $REPLY" >&2
+    esac
+done || exit
+
+efi-updatevar -e -f db.esl  db  || die 'failed to insert db'
+efi-updatevar -e -f KEK.esl KEK || die 'failed to insert KEK'
+efi-updatevar -f    PK.auth PK  || die 'failed to insert PK'
