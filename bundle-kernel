@@ -26,6 +26,22 @@ detect_version_template() {
     esac
 }
 
+case "$1" in
+    help|-h|--help)
+        printf >&2 '%s\n' \
+'bundle-kernel [kernel-version]
+
+Parameters
+  kernel-version - the kernel to bundle instead of the latest version.
+
+Bundle a kernel to be a single, bootable EFI application using systemd'\''s bootstub.'
+        exit 1
+    ;;
+    *)
+        kversion="$1"
+    ;;
+esac
+
 source /etc/bundle-kernel.conf || die 'Failed to source configuration.'
 [[ -z "$KERNEL_PATTERN" ]] &&
     die 'missing $KERNEL_PATTERN from /etc/bundle-kernel.conf'
@@ -52,33 +68,38 @@ detect_version_template "$CMDLINE_PATTERN" ||
 [[ -z "$RETENTION" ]] &&
    die '$RETENTION is not defined in /etc/bundle-kernel.conf'
 
-kpatt1="${KERNEL_PATTERN%'%version%'*}"
-kpatt2="${KERNEL_PATTERN##"$kpatt1"}"
-kpatt2="${kpatt2#'%version%'}"
-klatest="$(
-    printf '%s\0' "$kpatt1"*"$kpatt2" \
-    | sort --version-sort \
-        --zero-terminated \
-        --reverse \
-    | head -1 --zero-terminated \
-    | tr -d '\0'
-)"
+if [[ -z "$kversion" ]]; then
+    kpatt1="${KERNEL_PATTERN%'%version%'*}"
+    kpatt2="${KERNEL_PATTERN##"$kpatt1"}"
+    kpatt2="${kpatt2#'%version%'}"
+    klatest="$(
+        printf '%s\0' "$kpatt1"*"$kpatt2" \
+        | sort --version-sort \
+            --zero-terminated \
+            --reverse \
+        | head -1 --zero-terminated \
+        | tr -d '\0'
+    )"
 
-[[ -f "$klatest" ]] ||
-    die "no kernel found for given pattern $KERNEL_PATTERN"
+    kversion="${klatest##"$kpatt1"}"
+    kversion="${kversion%"$kpatt2"}"
+fi
 
-kversion="${klatest##"$kpatt1"}"
-kversion="${kversion%"$kpatt2"}"
+kernel="${KERNEL_PATTERN/'%version%'/"$kversion"}"
+[[ -f "$kernel" ]] ||
+    die "no kernel found for given pattern $KERNEL_PATTERN - $kernel"
 
 initramfs="${INITRAMFS_PATTERN/'%version%'/"$kversion"}"
 [[ -f "$initramfs" ]] ||
-    die "no initramfs found for given pattern $INITRAMFS_PATTERN"
+    die "no initramfs found for given pattern $INITRAMFS_PATTERN - $initramfs"
 
 cmdline="${CMDLINE_PATTERN/'%version%'/"$kversion"}"
 [[ -f "$cmdline" ]] ||
-    die "no cmdline found for given pattern $CMDLINE_PATTERN"
+    die "no cmdline found for given pattern $CMDLINE_PATTERN - $cmdline"
 
 destination="$DESTINATION"/linux-"$kversion".exe
+
+printf >&2 'Info: %s\n' "Bundling kernel version $kversion"
 
 # create bundle for systemd-boot's bootloader
 objcopy \
@@ -86,7 +107,7 @@ objcopy \
         --change-section-vma .osrel=0x20000 \
     --add-section .cmdline="$cmdline" \
         --change-section-vma .cmdline=0x30000 \
-    --add-section .linux="$klatest" \
+    --add-section .linux="$kernel" \
         --change-section-vma .linux=0x40000 \
     --add-section .initrd="$initramfs" \
         --change-section-vma .initrd=0x3000000 \
