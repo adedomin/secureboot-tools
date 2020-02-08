@@ -26,21 +26,11 @@ detect_version_template() {
     esac
 }
 
-case "$1" in
-    help|-h|--help)
-        printf >&2 '%s\n' \
-'bundle-kernel [kernel-version]
-
-Parameters
-  kernel-version - the kernel to bundle instead of the latest version.
-
-Bundle a kernel to be a single, bootable EFI application using systemd'\''s bootstub.'
-        exit 1
-    ;;
-    *)
-        kversion="$1"
-    ;;
-esac
+version_glob() {
+    VERSION_GLOB_1="${1%'%version%'*}"
+    VERSION_GLOB_2="${1##"$VERSION_GLOB_1"}"
+    VERSION_GLOB_2="${VERSION_GLOB_2#'%version%'}"
+}
 
 source /etc/bundle-kernel.conf || die 'Failed to source configuration.'
 [[ -z "$KERNEL_PATTERN" ]] &&
@@ -51,6 +41,14 @@ detect_version_template "$KERNEL_PATTERN" ||
     die 'missing $INITRAMFS_PATTERN from /etc/bundle-kernel.conf'
 detect_version_template "$INITRAMFS_PATTERN" ||
     die 'there can only be one %version% pattern in $INITRAMFS_PATTERN.'
+[[ -z "$DESTINATION_PATTERN" ]] &&
+    die 'missing $DESTINATION_PATTERN, from /etc/bundle-kernel.conf.'
+detect_version_template "$DESTINATION_PATTERN" ||
+    die 'there can only be one %version% pattern in $DESTINATION_PATTERN.'
+[[ -z "$LOADER_CONF_PATTERN" ]] &&
+    die 'missing $LOADER_CONF_PATTERN, from /etc/bundle-kernel.conf.'
+detect_version_template "$LOADER_CONF_PATTERN" ||
+    die 'there can only be one %version% pattern in $LOADER_CONF_PATTERN.'
 [[ -z "$CMDLINE_PATTERN" ]] &&
     die 'missing $CMDLINE_PATTERN from /etc/bundle-kernel.conf'
 detect_version_template "$CMDLINE_PATTERN" ||
@@ -63,17 +61,51 @@ detect_version_template "$CMDLINE_PATTERN" ||
     die '$SECUREBOOT_DBCRT, from /etc/bundle-kernel.conf, is not a file.'
 [[ -z "$ESP" ]] &&
     die 'missing $ESP from /etc/bundle-kernel.conf'
-[[ ! -d "$DESTINATION" ]] &&
-    die '$DESTINATION, from /etc/bundle-kernel.conf, is not a directory'
+[[ -z "$BOOTLOADER_ENTRY_NAME" ]] &&
+    die '$BOOTLOADER_ENTRY_NAME, from /etc/bundle-kernel.conf, is not specified.'
+# TODO: consider removing this
 [[ -z "$RETENTION" ]] &&
-   die '$RETENTION is not defined in /etc/bundle-kernel.conf'
+    die '$RETENTION is not defined in /etc/bundle-kernel.conf'
 
+case "$0" in
+    *.install)
+        # invoked by freedesktop spec kernel-install
+        kernel_install=1
+    ;;
+esac
+
+case "$1" in
+    help|-h|--help)
+        printf >&2 '%s\n' \
+'bundle-kernel [add|remove] [kernel-version]
+
+Parameters
+  kernel-version - the kernel to bundle instead of the latest version.
+
+Bundle a kernel to be a single, bootable EFI application using systemd'\''s bootstub.'
+        exit 1
+    ;;
+    add)
+        kversion="$2"
+    ;;
+    remove)
+        kversion="$2"
+        destination="${DESTINATION_PATTERN/'%version%'/"$kversion"}"
+        loader_conf="${LOADER_CONF_PATTERN/'%version%'/"$kversion"}"
+        loader_conf="$ESP/loader/entries/${loader_conf}.conf"
+        printf >&2 'Info: %s\n' "Removing bundled kernel version $kversion"
+        rm -- "$destination" "$loader_conf" || \
+            printf >&2 'Warning: %s\n' 'Could not remove bundled kernel version '"${kversion}"
+        exit 0
+    ;;
+    *)
+        kversion="$1"
+    ;;
+esac
 if [[ -z "$kversion" ]]; then
-    kpatt1="${KERNEL_PATTERN%'%version%'*}"
-    kpatt2="${KERNEL_PATTERN##"$kpatt1"}"
-    kpatt2="${kpatt2#'%version%'}"
+    version_glob "${KERNEL_PATTERN}"
     klatest="$(
-        printf '%s\0' "$kpatt1"*"$kpatt2" \
+        printf '%s\0' "$VERSION_GLOB_1"*"$VERSION_GLOB_2" \
         | sort --version-sort \
             --zero-terminated \
             --reverse \
@@ -97,7 +129,9 @@ cmdline="${CMDLINE_PATTERN/'%version%'/"$kversion"}"
 [[ -f "$cmdline" ]] ||
     die "no cmdline found for given pattern $CMDLINE_PATTERN - $cmdline"
 
-destination="$DESTINATION"/linux-"$kversion".exe
+destination="${DESTINATION_PATTERN/'%version%'/"$kversion"}"
+loader_conf="${LOADER_CONF_PATTERN/'%version%'/"$kversion"}"
+loader_conf="$ESP/loader/entries/${loader_conf}.conf"
 
 printf >&2 'Info: %s\n' "Bundling kernel version $kversion"
 
@@ -124,26 +158,30 @@ sbsign \
 
 # generate bootloader entry
 printf '%s\n' \
-    "title linux-${kversion}" \
+    "title $BOOTLOADER_ENTRY_NAME" \
+    "version $kversion" \
     "efi ${destination#"$ESP"}" \
-> "$ESP/loader/entries/linux-${kversion}.conf" ||
+> "$loader_conf" ||
     die 'failed to create bootloader entry'
 
-# remove older bundles and entries
-pushd "$DESTINATION" >/dev/null || die 'failed to remove old bundles'
-mapfile -t -d $'\0' bundles < <(
-    printf '%s\0' linux-*.exe \
-    | sort --version-sort \
-        --zero-terminated \
-        --reverse
-)
-rm -f -- "${bundles[@]:$RETENTION}"
-popd >/dev/null || true
-pushd "$ESP/loader/entries" >/dev/null || die 'failed to remove old entries'
-mapfile -t -d $'\0' entries < <(
-    printf '%s\0' linux-*.conf \
-    | sort --version-sort \
-        --zero-terminated \
-        --reverse
-)
-rm -f -- "${entries[@]:$RETENTION}"
+# TODO: consider removing this
+if [[ -z "$kernel_install" ]]; then
+    # remove older bundles and entries
+    version_glob "${DESTINATION_PATTERN}"
+    mapfile -t -d $'\0' bundles < <(
+        printf '%s\0' "${VERSION_GLOB_1}"*"${VERSION_GLOB_2}" \
+        | sort --version-sort \
+            --zero-terminated \
+            --reverse
+    )
+    rm -f -- "${bundles[@]:$RETENTION}"
+    pushd "$ESP/loader/entries" >/dev/null || die 'failed to remove old entries'
+        version_glob "${LOADER_CONF_PATTERN}"
+        mapfile -t -d $'\0' entries < <(
+            printf '%s\0' "${VERSION_GLOB_1}"*"${VERSION_GLOB_2}".conf \
+            | sort --version-sort \
+                --zero-terminated \
+                --reverse
+        )
+        rm -f -- "${entries[@]:$RETENTION}"
+fi
