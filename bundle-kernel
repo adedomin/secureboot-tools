@@ -113,8 +113,8 @@ if [[ -z "$kversion" ]]; then
         | tr -d '\0'
     )"
 
-    kversion="${klatest##"$kpatt1"}"
-    kversion="${kversion%"$kpatt2"}"
+    kversion="${klatest##"$VERSION_GLOB_1"}"
+    kversion="${kversion%"$VERSION_GLOB_2"}"
 fi
 
 kernel="${KERNEL_PATTERN/'%version%'/"$kversion"}"
