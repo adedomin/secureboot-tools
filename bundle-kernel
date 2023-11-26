@@ -140,7 +140,7 @@ if [ -x /usr/lib/systemd/ukify ]; then
     /usr/lib/systemd/ukify build \
         --linux="$kernel" \
         --initrd="$initramfs" \
-        --cmdline="$cmdline" \
+        --cmdline="$(< "$cmdline")" \
         --os-release="$OS_RELEASE" \
         --output="$destination"
         # ukify's command line parser is broken.
