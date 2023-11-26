@@ -136,18 +136,32 @@ loader_conf="$ESP/loader/entries/${loader_conf}.conf"
 printf >&2 'Info: %s\n' "Bundling kernel version $kversion"
 
 # create bundle for systemd-boot's bootloader
-objcopy \
-    --add-section .osrel="$OS_RELEASE" \
-        --change-section-vma .osrel=0x20000 \
-    --add-section .cmdline="$cmdline" \
-        --change-section-vma .cmdline=0x30000 \
-    --add-section .linux="$kernel" \
-        --change-section-vma .linux=0x40000 \
-    --add-section .initrd="$initramfs" \
-        --change-section-vma .initrd=0x3000000 \
-    \
-    /usr/lib/systemd/boot/efi/linuxx64.efi.stub \
-    "$destination" || die 'failed to create bundle'
+if [ -x /usr/lib/systemd/ukify ]; then
+    /usr/lib/systemd/ukify build \
+        --linux="$kernel" \
+        --initrd="$initramfs" \
+        --cmdline="$cmdline" \
+        --os-release="$OS_RELEASE" \
+        --output="$destination"
+        # ukify's command line parser is broken.
+        # --sign-kernel \
+        # --signtool=sbsign \
+        # --secureboot-private-key="$SECUREBOOT_DBKEY" \
+        # --secureboot-certificate="$SECUREBOOT_DBCERT" \
+else
+    objcopy \
+        --add-section .osrel="$OS_RELEASE" \
+            --change-section-vma .osrel=0x20000 \
+        --add-section .cmdline="$cmdline" \
+            --change-section-vma .cmdline=0x30000 \
+        --add-section .linux="$kernel" \
+            --change-section-vma .linux=0x40000 \
+        --add-section .initrd="$initramfs" \
+            --change-section-vma .initrd=0x3000000 \
+        \
+        /usr/lib/systemd/boot/efi/linuxx64.efi.stub \
+        "$destination" || die 'failed to create bundle'
+fi
 
 # secureboot sign bundle
 sbsign \
