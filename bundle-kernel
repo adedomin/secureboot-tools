@@ -142,8 +142,9 @@ if [ -x /usr/lib/systemd/ukify ]; then
         --initrd="$initramfs" \
         --cmdline="$(< "$cmdline")" \
         --os-release="$OS_RELEASE" \
-        --output="$destination"
-        # ukify's command line parser is broken.
+        --output="$destination" \
+        --uname="$kversion"
+        # ukify's parsing for these seems broken?
         # --sign-kernel \
         # --signtool=sbsign \
         # --secureboot-private-key="$SECUREBOOT_DBKEY" \
