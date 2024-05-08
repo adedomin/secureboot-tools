@@ -92,7 +92,7 @@ Bundle a kernel to be a single, bootable EFI application using systemd'\''s boot
         kversion="$2"
         destination="${DESTINATION_PATTERN/'%version%'/"$kversion"}"
         loader_conf="${LOADER_CONF_PATTERN/'%version%'/"$kversion"}"
-        loader_conf="$ESP/loader/entries/${loader_conf}.conf"
+        loader_conf="$ESP/loader/entries/${loader_conf}"
         printf >&2 'Info: %s\n' "Removing bundled kernel version $kversion"
         rm -- "$destination" "$loader_conf" || \
             printf >&2 'Warning: %s\n' 'Could not remove bundled kernel version '"${kversion}"
@@ -131,7 +131,7 @@ cmdline="${CMDLINE_PATTERN/'%version%'/"$kversion"}"
 
 destination="${DESTINATION_PATTERN/'%version%'/"$kversion"}"
 loader_conf="${LOADER_CONF_PATTERN/'%version%'/"$kversion"}"
-loader_conf="$ESP/loader/entries/${loader_conf}.conf"
+loader_conf="$ESP/loader/entries/${loader_conf}"
 
 printf >&2 'Info: %s\n' "Bundling kernel version $kversion"
 
